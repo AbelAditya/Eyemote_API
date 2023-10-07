@@ -1,24 +1,12 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
 import os
-import pickle
-from PIL import Image
 import numpy as np
-from torchvision import transforms
 import tensorflow as tf
-from fastapi.middleware.cors import CORSMiddleware  # Import CORS middleware
 import keras
 from keras.applications.inception_resnet_v2 import InceptionResNetV2
 import cv2
+from flask import Flask, request, jsonify
 
-
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://eyemote-ai.web.app/"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = Flask(__name__)
 
 
 def preprocess(image):
@@ -30,7 +18,7 @@ def preprocess(image):
 def make_model3():
     base_model = InceptionResNetV2(include_top=False, weights='imagenet', input_tensor=None, input_shape=(299, 299, 3), pooling=None, classes=5)
     inputs = keras.Input(shape=(299, 299, 3))
-    x = base_model(inputs, training=False)    
+    x = base_model(inputs, training=False)
     x = keras.layers.GlobalAveragePooling2D()(x)
     outputs = keras.layers.Dense(5, activation='softmax')(x)
     model = keras.Model(inputs=inputs, outputs=outputs)
@@ -39,41 +27,60 @@ def make_model3():
 
 model_inception_resnet = make_model3()
 
-model_inception_resnet.load_weights('model_inception_resnet.h5') 
+model_inception_resnet.load_weights('model_inception_resnet.h5')
 
-@app.get("/")
+@app.route("/")
 def home():
     return "Welcome"
 
-@app.post("/upload")
-async def upload_file(left: UploadFile,right: UploadFile):
-    print('uploaded')
+
+@app.route("/upload", methods=["POST"])
+def upload_file():
+
     os.makedirs("uploads", exist_ok=True)
 
-    # Save the uploaded file
-    with open(os.path.join("uploads", left.filename), 'wb') as f:
-        f.write(left.file.read())
-    image = cv2.imread('uploads/' + left.filename)
-    image = preprocess(image)
-    # cv2.imwrite('./OG2.jpeg', image)
-    new_size = (299, 299)
-    image = np.array([cv2.resize(image, new_size)])
-    image = tf.convert_to_tensor(image)
-    predL = model_inception_resnet.predict(image)
+    files = request.files.to_dict(flat=False)
 
-    with open(os.path.join("uploads", right.filename), 'wb') as f:
-        f.write(right.file.read())
-    image = cv2.imread('uploads/' + right.filename)
-    image = preprocess(image)
-    # cv2.imwrite('./OG2.jpeg', image)
-    new_size = (299, 299)
-    image = np.array([cv2.resize(image, new_size)])
-    image = tf.convert_to_tensor(image)
-    predR = model_inception_resnet.predict(image)    
-    predL = [round(x*100,4) for x in predL.tolist()[0]]
-    predR = [round(x*100,4) for x in predR.tolist()[0]]
+    left_file = files['left'][0]
+    right_file = files['right'][0]
 
-    return {
-        "predL": predL,
-        "predR": predR
-    }
+    # saving the uploaded files
+    left_file.save("uploads/uploadL.jpeg")
+    right_file.save("uploads/uploadR.jpeg")
+
+
+    print('uploaded')
+
+    if left_file and right_file:
+        left_filename = r"uploads\uploadL.jpeg"
+        right_filename = r"uploads\uploadR.jpeg"
+
+        # Process and make predictions on left image
+        image_left = cv2.imread(left_filename)
+        image_left = preprocess(image_left)
+        new_size = (299, 299)
+        image_left = np.array([cv2.resize(image_left, new_size)])
+        image_left = tf.convert_to_tensor(image_left)
+        predL = model_inception_resnet.predict(image_left)
+
+        # Process and make predictions on right image
+        image_right = cv2.imread(right_filename)
+        image_right = preprocess(image_right)
+        new_size = (299, 299)
+        image_right = np.array([cv2.resize(image_right, new_size)])
+        image_right = tf.convert_to_tensor(image_right)
+        predR = model_inception_resnet.predict(image_right)
+
+    #     # Format predictions as needed
+        predL = [round(x * 100, 4) for x in predL.tolist()[0]]
+        predR = [round(x * 100, 4) for x in predR.tolist()[0]]
+
+        return jsonify({
+            "predL": predL,
+            "predR": predR
+        })
+    else:
+        return jsonify({"error": "Both left and right files must be provided."})
+
+# if __name__=="__main__":
+#     app.run(host='0.0.0.0',port=10000)
